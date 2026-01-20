@@ -38,9 +38,9 @@ cqf-cds-pricing/
 │   └── discard_figs/                 # Temporary figures (not for report)
 │
 ├── cds_pricing.ipynb                 # Core pricing notebook (parameterised)
-├── convergence_analysis.ipynb        # RNG convergence study
-├── pricing_orchestration.ipynb       # Copula comparison runner
-├── sensitivity_orchestration.ipynb   # Sensitivity analysis runner
+├── 1_convergence_analysis.ipynb      # RNG convergence study
+├── 2_pricing_orchestration.ipynb     # Copula comparison runner
+├── 3_sensitivity_orchestration.ipynb # Sensitivity analysis runner
 │
 ├── REPORT.md                         # Full methodology and results
 ├── REPORT.html                       # Formatted report (view in browser)
