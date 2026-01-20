@@ -1,0 +1,1438 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="" xml:lang="">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>CR Nasrat Kamal REPORT</title>
+  <style>
+    /* Default styles provided by pandoc.
+    ** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+    */
+    code{white-space: pre-wrap;}
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: min(4vw, 1.5em);}
+    div.column{flex: auto; overflow-x: auto;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+  </style>
+  <link rel="stylesheet" href="style.css" />
+  <script defer=""
+  src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml-full.js"
+  type="text/javascript"></script>
+</head>
+<body>
+<header id="title-block-header">
+<h1 class="title">CR Nasrat Kamal REPORT</h1>
+</header>
+<h1 id="cqf-final-project">CQF Final Project</h1>
+<h2 id="pricing-basket-credit-default-swaps-using-copula-models">Pricing
+Basket Credit Default Swaps using Copula Models</h2>
+<p><em>k-th to Default Basket CDS Valuation</em></p>
+<p><strong>Nasrat Kamal</strong></p>
+<p><strong>January 2026</strong></p>
+<hr />
+<h2 id="introduction">1. Introduction</h2>
+<p>This report presents the <strong>CQF Final Project</strong> on
+<strong>pricing k-th to default basket credit default swaps</strong>
+using copula models. The project implements a Monte Carlo simulation
+framework to value these multi-name credit derivatives, comparing
+Gaussian and Student-t copulas for modelling default dependence across a
+basket of five reference entities.</p>
+<p><strong>A credit default swap (CDS)</strong> is a derivative contract
+that transfers credit risk between two parties. The protection buyer
+pays a periodic premium (the CDS spread) to the protection seller, who
+in return compensates the buyer if a specified reference entity
+experiences a credit event such as default or bankruptcy. A basket CDS
+extends this concept to multiple reference entities. The k-th to default
+variant triggers a payout only when the k-th credit event occurs within
+the basket. For example, in a first-to-default swap, the protection
+seller pays upon the first default among all referenced entities; in a
+fifth-to-default swap, four defaults must occur before the contract pays
+out.</p>
+<p><strong>Pricing a basket CDS</strong> requires valuing two cash flow
+streams: the premium leg and the protection leg. The protection buyer
+pays periodic premiums until either the contract matures or the k-th
+default occurs, whichever comes first. The protection leg represents the
+contingent payment upon the k-th default, equal to the loss given
+default on the defaulted entity. The fair spread is the premium rate
+that equates the expected present value of these two legs. Unlike
+single-name CDS pricing where closed-form solutions exist, basket CDS
+pricing must account for the joint default behaviour of all reference
+entities. The k-th default time is an order statistic that depends on
+the entire correlation structure of the portfolio. Monte Carlo
+simulation provides a natural framework: we simulate correlated default
+times across all entities, identify the k-th default in each scenario,
+compute the resulting cash flows, and average across paths to obtain
+expected leg values. This simulation-based approach follows the
+methodology established by Hull and White (2004).</p>
+<p><strong>Modelling joint default behaviour</strong> requires
+specifying both marginal default distributions and the dependence
+structure linking them. <strong>Copula theory</strong> separates these
+components: Sklar’s theorem establishes that any multivariate
+distribution can be decomposed into its marginals and a copula function
+capturing dependence (Nelsen, 2006). This allows calibrating individual
+default probabilities from single-name CDS spreads via hazard rate
+bootstrapping, while estimating correlations from historical data on
+credit spread movements. This project implements two copula families:
+the Gaussian copula, which became the industry standard following Li
+(2000), and the Student-t copula, which introduces heavier tails to
+better capture the clustering of defaults observed during credit crises
+(McNeil, Frey and Embrechts, 2015).</p>
+<p><strong>The objective is to price a 5th-to-default basket CDS on five
+financial sector names over a 5-year period</strong> — the most senior
+tranche where all five must default before payout. Several methodology
+choices arise: for random number generation, options include
+pseudo-random sampling, quasi-random sequences (Halton, Sobol), and
+variance reduction via antithetic variates. Rather than selecting
+arbitrarily, we first conduct convergence studies to evaluate RNG
+methods and determine the simulation count required for stable
+estimates. Based on these findings, we select Sobol sequences with
+100,000 simulations for the main analysis. We then compute fair spreads
+under both copulas and perform sensitivity analyses on correlation,
+recovery rates, and the choice of k to validate model behaviour.</p>
+<hr />
+<h2 id="methodology">2. Methodology</h2>
+<h3 id="overall-framework">2.1 Overall Framework</h3>
+<p>The pricing framework separates the modelling of individual default
+probabilities (marginals) from the dependence structure linking them.
+Each reference entity’s default behaviour is characterised by a hazard
+rate term structure, calibrated independently from single-name CDS
+spreads. The copula then joins these marginals into a joint
+distribution, capturing how defaults may cluster or occur
+independently.</p>
+<p>The workflow proceeds in four stages:</p>
+<ol type="1">
+<li>Load historical spread data and current term structures</li>
+<li>Calibrate marginal hazard rates via bootstrapping and estimate the
+copula correlation matrix from historical co-movements</li>
+<li>Simulate correlated default times using the fitted copula</li>
+<li>Price the basket CDS by computing expected premium and protection
+leg values across simulated scenarios</li>
+</ol>
+<p>This approach follows the framework introduced by Li (2000) for
+credit portfolio modelling and extended by Hull and White (2004) for
+basket CDS valuation.</p>
+<h3 id="credit-default-swaps">2.2 Credit Default Swaps</h3>
+<p>A single-name CDS provides protection against default by a specific
+reference entity. The protection buyer pays a periodic spread (quoted in
+basis points per annum) until maturity or default, whichever occurs
+first. Upon a credit event, the protection seller pays the buyer the
+loss given default—typically the notional amount minus the recovery
+value of the defaulted obligation. Pricing a CDS requires modelling the
+probability of default over time, which is captured through the hazard
+rate (Schönbucher, 2003).</p>
+<p>The hazard rate <span class="math inline">\(h(t)\)</span> represents
+the instantaneous conditional probability of default at time <span
+class="math inline">\(t\)</span>, given survival to that point. The
+survival probability to time <span class="math inline">\(T\)</span> is
+related to the hazard rate by:</p>
+<p><span class="math inline">\(Q(T) = \exp\left(-\int_0^T h(s)\,
+ds\right)\)</span></p>
+<p>For practical implementation, we assume piecewise-constant hazard
+rates between standard CDS tenors (1Y, 2Y, 3Y, 5Y, 7Y, 10Y). Under this
+assumption, the survival probability simplifies to:</p>
+<p><span class="math inline">\(Q(T) = \exp\left(-\sum_{i=1}^{n} h_i
+\Delta t_i\right)\)</span></p>
+<p>where <span class="math inline">\(h_i\)</span> is the constant hazard
+rate over interval <span class="math inline">\(i\)</span> and <span
+class="math inline">\(\Delta t_i\)</span> is the interval length.</p>
+<p><strong>Hazard Rate Bootstrapping</strong></p>
+<p>The hazard rates are derived from observed CDS spreads across the
+term structure. For a CDS with maturity <span
+class="math inline">\(T\)</span> and observed spread <span
+class="math inline">\(s\)</span>, the fair spread equates the expected
+present values of the premium and protection legs.</p>
+<p>Under continuous premium payment and zero interest rates, the premium
+leg (per unit spread) is the expected survival time:</p>
+<p><span class="math inline">\(V_{prem}(T) = \int_0^{T} Q(t)\,
+dt\)</span></p>
+<p>The protection leg pays <span class="math inline">\((1-R)\)</span>
+upon default:</p>
+<p><span class="math inline">\(V_{prot}(T) = (1-R) [1 -
+Q(T)]\)</span></p>
+<p>Setting <span class="math inline">\(s \cdot V_{prem}(T) =
+V_{prot}(T)\)</span> and rearranging gives the fair spread:</p>
+<p><span class="math inline">\(s = \frac{(1-R)[1 - Q(T)]}{\int_0^{T}
+Q(t)\, dt}\)</span></p>
+<p>For a constant hazard rate <span class="math inline">\(h\)</span>,
+the survival probability is <span class="math inline">\(Q(t) =
+e^{-ht}\)</span>, so <span class="math inline">\(Q(T) = e^{-hT}\)</span>
+and:</p>
+<p><span class="math inline">\(\int_0^{T} Q(t)\, dt = \int_0^{T}
+e^{-ht}\, dt = \frac{1 - e^{-hT}}{h}\)</span></p>
+<p>Substituting into the fair spread equation:</p>
+<p><span class="math inline">\(s = \frac{(1-R)[1 - e^{-hT}]}{(1 -
+e^{-hT})/h} = (1-R) \cdot h\)</span></p>
+<p>Rearranging:</p>
+<p><span class="math inline">\(h = \frac{s}{1 - R}\)</span></p>
+<p>This result is exact under the assumptions of constant hazard rate,
+zero interest rates, and continuous premium payment (ignoring accrued
+premium at default). For piecewise-constant hazard rates between tenors,
+we apply this formula to each CDS spread to obtain the average hazard
+rate for that maturity. The survival probability to any time <span
+class="math inline">\(T\)</span> is then:</p>
+<p><span class="math inline">\(Q(T) = \exp\left(-\sum_{i=1}^{k} h_i
+\Delta t_i\right)\)</span></p>
+<p>Recovery is typically assumed constant at 40% for senior unsecured
+debt, following market convention. This gives a loss given default (LGD)
+of 60%.</p>
+<h3 id="copula-theory">2.3 Copula Theory</h3>
+<p>A copula is a multivariate distribution function that links marginal
+distributions to form a joint distribution. Sklar’s theorem (1959)
+establishes that any joint distribution <span
+class="math inline">\(F(x_1, \ldots, x_n)\)</span> with continuous
+marginals <span class="math inline">\(F_1, \ldots, F_n\)</span> can be
+written as:</p>
+<p><span class="math inline">\(F(x_1, \ldots, x_n) = C(F_1(x_1), \ldots,
+F_n(x_n))\)</span></p>
+<p>where <span class="math inline">\(C: [0,1]^n \to [0,1]\)</span> is
+the copula function. This decomposition allows modelling marginal
+behaviour and dependence structure separately—a key advantage for credit
+portfolio modelling where individual default probabilities are
+calibrated from single-name instruments while dependence is estimated
+from historical data. The theoretical foundations are covered
+extensively in Nelsen (2006) and Cherubini, Luciano and Vecchiato
+(2004).</p>
+<p><strong>Gaussian Copula</strong></p>
+<p>The Gaussian copula is derived from the multivariate normal
+distribution. For a correlation matrix <span
+class="math inline">\(\Sigma\)</span>, the Gaussian copula is defined
+as:</p>
+<p><span class="math inline">\(C_\Sigma^{Ga}(u_1, \ldots, u_n) =
+\Phi_\Sigma(\Phi^{-1}(u_1), \ldots, \Phi^{-1}(u_n))\)</span></p>
+<p>where <span class="math inline">\(\Phi^{-1}\)</span> is the standard
+normal inverse CDF and <span class="math inline">\(\Phi_\Sigma\)</span>
+is the joint CDF of a multivariate normal with correlation matrix <span
+class="math inline">\(\Sigma\)</span>. Simulation proceeds by:</p>
+<ol type="1">
+<li>Generating independent standard normals <span
+class="math inline">\(Z\)</span></li>
+<li>Applying the Cholesky decomposition <span
+class="math inline">\(Z_{corr} = LZ\)</span> where <span
+class="math inline">\(\Sigma = LL^T\)</span></li>
+<li>Transforming to uniforms via <span class="math inline">\(U =
+\Phi(Z_{corr})\)</span></li>
+</ol>
+<p>The Gaussian copula exhibits zero tail dependence—the probability of
+joint extreme events vanishes in the limit. This property has been
+criticised as unrealistic for credit risk, where defaults tend to
+cluster during crises (McNeil, Frey and Embrechts, 2015).</p>
+<p><strong>Student-t Copula</strong></p>
+<p>The Student-t copula introduces an additional parameter <span
+class="math inline">\(\nu\)</span> (degrees of freedom) that controls
+tail thickness:</p>
+<p><span class="math inline">\(C_{\Sigma,\nu}^{t}(u_1, \ldots, u_n) =
+t_{\Sigma,\nu}(t_\nu^{-1}(u_1), \ldots, t_\nu^{-1}(u_n))\)</span></p>
+<p>where <span class="math inline">\(t_\nu^{-1}\)</span> is the inverse
+CDF of a univariate <span class="math inline">\(t\)</span>-distribution
+with <span class="math inline">\(\nu\)</span> degrees of freedom. Lower
+<span class="math inline">\(\nu\)</span> produces heavier tails and
+stronger tail dependence, meaning joint extreme events become more
+likely. As <span class="math inline">\(\nu \to \infty\)</span>, the
+t-copula converges to the Gaussian copula.</p>
+<p>Simulation requires an additional step:</p>
+<ol type="1">
+<li>Generate correlated normals <span
+class="math inline">\(Z_{corr}\)</span> as above</li>
+<li>Generate an independent chi-square variate <span
+class="math inline">\(W \sim \chi^2_\nu\)</span></li>
+<li>Scale by <span class="math inline">\(Y = Z_{corr} /
+\sqrt{W/\nu}\)</span></li>
+<li>Transform via <span class="math inline">\(U = t_\nu(Y)\)</span></li>
+</ol>
+<p><strong>Correlation Matrix Calibration</strong></p>
+<p>For elliptical copulas, the correlation matrix <span
+class="math inline">\(\Sigma\)</span> must be estimated from data. The
+direct approach—transform uniform marginals to latent variables via
+inverse CDF, then compute Pearson correlation—creates a circular
+dependency for the t-copula: estimating <span
+class="math inline">\(\Sigma\)</span> requires knowing <span
+class="math inline">\(\nu\)</span>, but estimating <span
+class="math inline">\(\nu\)</span> requires knowing <span
+class="math inline">\(\Sigma\)</span>.</p>
+<p>Rank correlation resolves this. Spearman’s <span
+class="math inline">\(\rho_S\)</span> is invariant across elliptical
+copula families, and for elliptical distributions, it relates to the
+Pearson correlation of latent variables by:</p>
+<p><span class="math inline">\(\rho = 2 \sin\left(\frac{\pi
+\rho_S}{6}\right)\)</span></p>
+<p>This formula holds for both Gaussian and t-copulas, enabling unified
+calibration (McNeil, Frey and Embrechts, 2015). The degrees of freedom
+<span class="math inline">\(\nu\)</span> for the t-copula can then be
+estimated via maximum likelihood, or specified as a scenario parameter
+for sensitivity analysis.</p>
+<p><strong>Degrees of Freedom Estimation</strong></p>
+<p>With the correlation matrix <span
+class="math inline">\(\Sigma\)</span> fixed from rank correlation, the
+degrees of freedom <span class="math inline">\(\nu\)</span> is estimated
+by maximising the t-copula log-likelihood. For observations <span
+class="math inline">\(\mathbf{u}_1, \ldots, \mathbf{u}_T\)</span> of
+uniform marginals, we first transform to t-distributed latent
+variables:</p>
+<p><span class="math inline">\(\mathbf{x}_t = (t_\nu^{-1}(u_{t,1}),
+\ldots, t_\nu^{-1}(u_{t,n}))\)</span></p>
+<p>The t-copula density is:</p>
+<p><span class="math inline">\(c(\mathbf{u}; \Sigma, \nu) =
+\frac{f_{\Sigma,\nu}(\mathbf{x})}{\prod_{j=1}^{n}
+f_\nu(x_j)}\)</span></p>
+<p>where <span class="math inline">\(f_{\Sigma,\nu}\)</span> is the
+multivariate t-density and <span class="math inline">\(f_\nu\)</span> is
+the univariate t-density. The log-likelihood function is:</p>
+<p><span class="math inline">\(\ell(\nu) = \sum_{t=1}^{T} \log
+c(\mathbf{u}_t; \Sigma, \nu)\)</span></p>
+<p>Expanding the densities, this becomes:</p>
+<p><span class="math inline">\(\ell(\nu) = T \log \Gamma\left(\frac{\nu
++ n}{2}\right) - T \log \Gamma\left(\frac{\nu}{2}\right) - \frac{T}{2}
+\log |\Sigma| - \frac{\nu + n}{2} \sum_{t=1}^{T} \log\left(1 +
+\frac{\mathbf{x}_t^\top \Sigma^{-1} \mathbf{x}_t}{\nu}\right)\)</span>
+<span class="math inline">\(\quad + \frac{\nu + 1}{2} \sum_{t=1}^{T}
+\sum_{j=1}^{n} \log\left(1 + \frac{x_{t,j}^2}{\nu}\right) - nT \log
+\Gamma\left(\frac{\nu + 1}{2}\right) + nT \log
+\Gamma\left(\frac{\nu}{2}\right)\)</span></p>
+<p>The MLE <span class="math inline">\(\hat{\nu}\)</span> is found by
+numerical optimisation:</p>
+<p><span class="math inline">\(\hat{\nu} = \arg\max_{\nu &gt; 2}
+\ell(\nu)\)</span></p>
+<p>The constraint <span class="math inline">\(\nu &gt; 2\)</span>
+ensures finite variance. In practice, we evaluate the log-likelihood
+over a grid of <span class="math inline">\(\nu\)</span> values (e.g.,
+2.5 to 30) and select the maximiser, with optional refinement via
+gradient-based optimisation. This profile likelihood approach—fixing
+<span class="math inline">\(\Sigma\)</span> and optimising over <span
+class="math inline">\(\nu\)</span> alone—avoids the joint optimisation
+problem and produces stable estimates.</p>
+<h3 id="monte-carlo-simulation">2.4 Monte Carlo Simulation</h3>
+<p>The Monte Carlo framework generates <span
+class="math inline">\(N\)</span> independent scenarios, each producing a
+joint realisation of default times across all reference entities. The
+theoretical foundations for Monte Carlo methods in finance are
+established in Glasserman (2003). For each scenario <span
+class="math inline">\(i\)</span>, the simulation proceeds in three
+steps.</p>
+<p><strong>Step 1: Generate correlated uniforms.</strong> Using the
+calibrated copula, we simulate a vector of correlated uniform random
+variables <span class="math inline">\((U_1^{(i)}, \ldots,
+U_n^{(i)})\)</span> for the <span class="math inline">\(n\)</span>
+reference entities. These uniforms encode the dependence structure—high
+correlation in the copula produces uniforms that tend to be jointly high
+or jointly low.</p>
+<p><strong>Step 2: Invert to default times.</strong> Each uniform <span
+class="math inline">\(U_j^{(i)}\)</span> is transformed to a default
+time <span class="math inline">\(\tau_j^{(i)}\)</span> using the
+entity’s marginal survival function. Since <span
+class="math inline">\(Q(\tau) = P(\tau &gt; t)\)</span> represents the
+probability of surviving beyond time <span
+class="math inline">\(t\)</span>, and <span
+class="math inline">\(U_j\)</span> is uniform on <span
+class="math inline">\([0,1]\)</span>, we set:</p>
+<p><span class="math inline">\(\tau_j^{(i)} = Q_j^{-1}(1 -
+U_j^{(i)})\)</span></p>
+<p>Under the piecewise-constant hazard rate assumption, this inversion
+is performed analytically. If <span class="math inline">\(1 -
+U_j\)</span> falls within the survival probability range corresponding
+to interval <span class="math inline">\([t_{k-1}, t_k]\)</span>, the
+default time is:</p>
+<p><span class="math inline">\(\tau_j = t_{k-1} + \frac{1}{h_k}
+\ln\left(\frac{Q(t_{k-1})}{1 - U_j}\right)\)</span></p>
+<p>If <span class="math inline">\(1 - U_j &gt; Q(T)\)</span> where <span
+class="math inline">\(T\)</span> is the maximum tenor, default occurs
+beyond the modelled horizon and is treated as no default (i.e., <span
+class="math inline">\(\tau_j = \infty\)</span>).</p>
+<p><strong>Step 3: Extract the k-th default time.</strong> The simulated
+default times <span class="math inline">\((\tau_1^{(i)}, \ldots,
+\tau_n^{(i)})\)</span> are sorted in ascending order. The k-th order
+statistic <span class="math inline">\(\tau_{(k)}^{(i)}\)</span>
+represents the time of the k-th default in scenario <span
+class="math inline">\(i\)</span>. For a 5th-to-default basket with five
+entities, this is simply the maximum default time—all five must default
+for the contract to trigger.</p>
+<p>After <span class="math inline">\(N\)</span> simulations, we have a
+distribution of k-th default times from which expected cash flows are
+computed.</p>
+<h3 id="random-number-generation">2.5 Random Number Generation</h3>
+<p>The quality of Monte Carlo estimates depends on the random number
+generation method. This project implements four approaches to study
+their convergence properties, following the variance reduction
+techniques described in Glasserman (2003).</p>
+<p><strong>Pseudo-random (standard)</strong></p>
+<p>Standard pseudo-random numbers are generated via NumPy’s Mersenne
+Twister algorithm. The Monte Carlo estimator converges at rate <span
+class="math inline">\(O(1/\sqrt{N})\)</span>—halving the standard error
+requires quadrupling the number of simulations. This rate is independent
+of dimension, making pseudo-random sampling robust for high-dimensional
+problems.</p>
+<p><strong>Quasi-random sequences (Halton, Sobol)</strong></p>
+<p>Quasi-random or low-discrepancy sequences fill the sample space more
+uniformly than pseudo-random numbers, avoiding the clustering and gaps
+inherent in random sampling (Glasserman, 2003, Ch. 5). The theoretical
+convergence rate is <span class="math inline">\(O((\log N)^d /
+N)\)</span>, which is faster than pseudo-random for moderate dimensions
+<span class="math inline">\(d\)</span> and smooth integrands. Sobol
+sequences generally outperform Halton sequences in higher dimensions due
+to better uniformity properties (Niederreiter, 1992). Both sequences are
+scrambled (randomised) to enable unbiased error estimation and avoid
+correlation artefacts.</p>
+<p><strong>Antithetic variates</strong></p>
+<p>Antithetic variates reduce variance by introducing negative
+correlation between paired samples. For each base sample <span
+class="math inline">\(U \sim \text{Uniform}(0,1)\)</span>, we also use
+<span class="math inline">\(1 - U\)</span>, which is equally valid as a
+uniform sample but negatively correlated with <span
+class="math inline">\(U\)</span>. When estimating <span
+class="math inline">\(\mathbb{E}[f(U)]\)</span>, this negative
+correlation reduces variance provided <span
+class="math inline">\(\text{Cov}(f(U), f(1-U)) &lt; 0\)</span>, which
+holds when <span class="math inline">\(f\)</span> is monotonic.</p>
+<p>For normal random variables, the analogous construction uses <span
+class="math inline">\(Z\)</span> and <span
+class="math inline">\(-Z\)</span>: both are valid <span
+class="math inline">\(N(0,1)\)</span> samples with perfect negative
+correlation. The variance reduction depends on the payoff structure—for
+monotonic payoffs, antithetic variates can halve the variance at no
+additional simulation cost.</p>
+<p><strong>Limitation for k-th to default payoffs</strong></p>
+<p>Antithetic variates require negative correlation between paired
+payoffs to achieve variance reduction. For k-th to default pricing, the
+payoff depends on an order statistic of multiple correlated default
+times. When we flip <span class="math inline">\(Z \to -Z\)</span> for
+all entities, each individual default time changes, but the relative
+ordering does not flip predictably—the entity that was k-th to default
+may remain k-th or shift arbitrarily. This sorting operation destroys
+the monotonic relationship required for effective variance reduction, as
+confirmed by the convergence analysis in Section 4.1.</p>
+<h3 id="pricing">2.6 Pricing</h3>
+<p>The fair spread of a k-th to default basket CDS is the premium rate
+that equates the expected present values of the protection and premium
+legs at inception. Let <span class="math inline">\(\tau_{(k)}\)</span>
+denote the k-th default time and <span class="math inline">\(T\)</span>
+the contract maturity.</p>
+<p><strong>Protection Leg</strong></p>
+<p>The protection leg pays <span class="math inline">\((1 - R)\)</span>
+times the notional upon the k-th default, where <span
+class="math inline">\(R\)</span> is the recovery rate. The expected
+present value is:</p>
+<p><span class="math inline">\(V_{prot} = (1 - R) \cdot
+\mathbb{E}\left[D(\tau_{(k)}) \cdot \mathbf{1}_{\{\tau_{(k)} \leq
+T\}}\right]\)</span></p>
+<p>where <span class="math inline">\(D(t)\)</span> is the discount
+factor to time <span class="math inline">\(t\)</span> and <span
+class="math inline">\(\mathbf{1}_{\{\cdot\}}\)</span> is the indicator
+function. Under the simplifying assumption of zero interest rates (i.e.,
+<span class="math inline">\(D(t) = 1\)</span> for all <span
+class="math inline">\(t\)</span>), this reduces to:</p>
+<p><span class="math inline">\(V_{prot} = (1 - R) \cdot P(\tau_{(k)}
+\leq T)\)</span></p>
+<p>The Monte Carlo estimate is:</p>
+<p><span class="math inline">\(\hat{V}_{prot} = \frac{1 - R}{N}
+\sum_{i=1}^{N} \mathbf{1}_{\{\tau_{(k)}^{(i)} \leq T\}}\)</span></p>
+<p><strong>Premium Leg</strong></p>
+<p>The premium leg pays the spread <span
+class="math inline">\(s\)</span> continuously (or at discrete intervals)
+until the earlier of the k-th default or maturity. The expected present
+value per unit spread is:</p>
+<p><span class="math inline">\(V_{prem} =
+\mathbb{E}\left[\int_0^{\min(\tau_{(k)}, T)} D(t)\,
+dt\right]\)</span></p>
+<blockquote>
+<p><strong>Limitation:</strong> This implementation assumes zero
+interest rates throughout, omitting the impact of discounting on cash
+flow valuations. This simplifies the pricing formulae and allows focus
+on the credit risk modelling aspects. In practice, stochastic or
+deterministic discount factors would be incorporated.</p>
+</blockquote>
+<p>Under zero interest rates, this simplifies to the expected duration
+of premium payments:</p>
+<p><span class="math inline">\(V_{prem} =
+\mathbb{E}\left[\min(\tau_{(k)}, T)\right]\)</span></p>
+<p>The Monte Carlo estimate is:</p>
+<p><span class="math inline">\(\hat{V}_{prem} = \frac{1}{N}
+\sum_{i=1}^{N} \min(\tau_{(k)}^{(i)}, T)\)</span></p>
+<p><strong>Fair Spread</strong></p>
+<p>The fair spread <span class="math inline">\(s^*\)</span> sets the
+contract value to zero at inception, requiring <span
+class="math inline">\(s^* \cdot V_{prem} = V_{prot}\)</span>. Thus:</p>
+<p><span class="math inline">\(s^* = \frac{V_{prot}}{V_{prem}} =
+\frac{(1-R) \cdot P(\tau_{(k)} \leq T)}{\mathbb{E}[\min(\tau_{(k)},
+T)]}\)</span></p>
+<p>The Monte Carlo estimate is the ratio of sample means:</p>
+<p><span class="math inline">\(\hat{s}^* =
+\frac{\hat{V}_{prot}}{\hat{V}_{prem}}\)</span></p>
+<p><strong>Standard Error Estimation</strong></p>
+<p>Monte Carlo estimates are subject to sampling error, and quantifying
+this uncertainty is essential for assessing the reliability of pricing
+results. The standard error allows us to construct confidence intervals
+around the fair spread estimate and determine whether differences
+between copula models or parameter choices are statistically
+meaningful.</p>
+<p>The fair spread is a ratio of two random variables, so its standard
+error requires the delta method (Glasserman, 2003). For a ratio <span
+class="math inline">\(\hat{\theta} = \hat{X}/\hat{Y}\)</span>, the
+approximate variance is:</p>
+<p><span class="math inline">\(\text{Var}(\hat{\theta}) \approx \theta^2
+\left[\frac{\text{Var}(\hat{X})}{\mu_X^2} +
+\frac{\text{Var}(\hat{Y})}{\mu_Y^2} - \frac{2\text{Cov}(\hat{X},
+\hat{Y})}{\mu_X \mu_Y}\right]\)</span></p>
+<p>where <span class="math inline">\(\mu_X = \mathbb{E}[X]\)</span> and
+<span class="math inline">\(\mu_Y = \mathbb{E}[Y]\)</span>. This
+provides 95% confidence intervals for the fair spread estimate.</p>
+<h3 id="implementation">2.7 Implementation</h3>
+<p>The methodology described above is implemented in Python across
+several modules. The table below maps each methodology component to its
+corresponding source code. For full details of the project architecture,
+module interfaces, and notebook workflow, see
+<code>README.md</code>.</p>
+<table>
+<colgroup>
+<col style="width: 38%" />
+<col style="width: 25%" />
+<col style="width: 36%" />
+</colgroup>
+<thead>
+<tr>
+<th>Methodology Component</th>
+<th>Source Module</th>
+<th>Key Classes/Functions</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Hazard rate bootstrapping</td>
+<td><code>src/bootstrapper.py</code></td>
+<td><code>HazardRateBootstrapper</code></td>
+</tr>
+<tr>
+<td>Gaussian copula</td>
+<td><code>src/copula.py</code></td>
+<td><code>GaussianCopula</code></td>
+</tr>
+<tr>
+<td>Student-t copula</td>
+<td><code>src/copula.py</code></td>
+<td><code>TCopula</code></td>
+</tr>
+<tr>
+<td>Correlation calibration</td>
+<td><code>src/copula.py</code></td>
+<td><code>fit()</code> method with rank correlation</td>
+</tr>
+<tr>
+<td>t-copula MLE for ν</td>
+<td><code>src/copula.py</code></td>
+<td><code>TCopula.fit()</code>, <code>log_likelihood()</code></td>
+</tr>
+<tr>
+<td>Random number generation</td>
+<td><code>src/rng.py</code></td>
+<td><code>RNGEngine</code></td>
+</tr>
+<tr>
+<td>Pseudo-random sampling</td>
+<td><code>src/rng.py</code></td>
+<td><code>RNGEngine(method='pseudo')</code></td>
+</tr>
+<tr>
+<td>Sobol sequences</td>
+<td><code>src/rng.py</code></td>
+<td><code>RNGEngine(method='sobol')</code></td>
+</tr>
+<tr>
+<td>Halton sequences</td>
+<td><code>src/rng.py</code></td>
+<td><code>RNGEngine(method='halton')</code></td>
+</tr>
+<tr>
+<td>Antithetic variates</td>
+<td><code>src/rng.py</code></td>
+<td><code>RNGEngine(method='antithetic')</code></td>
+</tr>
+<tr>
+<td>Fair spread calculation</td>
+<td><code>src/pricer.py</code></td>
+<td><code>BasketCDSPricer</code></td>
+</tr>
+<tr>
+<td>Default time simulation</td>
+<td><code>src/pricer.py</code></td>
+<td><code>simulate_default_times()</code></td>
+</tr>
+<tr>
+<td>Premium/protection legs</td>
+<td><code>src/pricer.py</code></td>
+<td><code>price()</code> method</td>
+</tr>
+</tbody>
+</table>
+<p>The main analysis is orchestrated through Jupyter notebooks:
+<code>cds_pricing.ipynb</code> for the core pricing workflow,
+<code>pricing_orchestration.ipynb</code> for copula comparison, and
+<code>sensitivity_orchestration.ipynb</code> for parameter sensitivity
+studies. These notebooks use <code>papermill</code> for parameterised
+execution and <code>scrapbook</code> for results collection across
+multiple runs.</p>
+<hr />
+<h2 id="data-sources">3. Data Sources</h2>
+<p>Pricing a basket CDS requires two categories of data: (1) CDS term
+structures at the pricing date for bootstrapping marginal hazard rates,
+and (2) historical time series data to estimate the copula correlation
+structure.</p>
+<p>CDS spread data presents significant sourcing challenges for academic
+projects. Historical CDS quotes and term structures are typically
+available only through expensive commercial data providers such as
+Bloomberg, Markit, or Refinitiv. Even when accessible, CDS markets for
+many corporate names are illiquid, with wide bid-ask spreads and
+infrequent trading. Given these constraints, this project adopts a
+pragmatic approach using synthetic and proxy data.</p>
+<h3 id="model-development-and-validation">3.1 Model Development and
+Validation</h3>
+<p>During model development, synthetic CDS data was used to build and
+validate the pricing framework. The synthetic dataset includes
+historical spreads and term structures for five fictional reference
+entities, with regime shifts to test model behaviour under different
+market conditions. Details of the data generation methodology are
+documented in <code>data/README_Data.md</code>.</p>
+<h3 id="final-pricing-data">3.2 Final Pricing Data</h3>
+<p>For the final pricing results presented in Section 4, we use:</p>
+<ul>
+<li><strong>Correlation estimation</strong>: Equity log-returns as a
+proxy for CDS spread changes. This is a common approach in practice, as
+equity data is more liquid and accessible than CDS spreads, and firms
+with correlated equity performance tend to exhibit correlated credit
+deterioration.</li>
+<li><strong>CDS term structure</strong>: Synthetic CDS curves at tenors
+of 1Y, 2Y, 3Y, 4Y, and 5Y for hazard rate bootstrapping.</li>
+<li><strong>Recovery rate</strong>: Constant at 40% for all entities,
+following market convention for senior unsecured debt.</li>
+</ul>
+<hr />
+<h2 id="results-discussion-and-observations">4. Results, Discussion and
+Observations</h2>
+<h3 id="convergence-studies">4.1 Convergence Studies</h3>
+<p>Before the main pricing analysis, we conducted convergence studies to
+select the simulation count and RNG method. The RNG methods evaluated
+are described in Section 2.5. These studies used the data that was used
+in pricing, but with <span class="math inline">\(k=3\)</span>
+(3rd-to-default) to ensure sufficient default events for meaningful
+analysis. We evaluated four RNG methods—pseudo-random, pseudo-random
+with antithetic variates, Halton, and Sobol—across simulation counts
+from 1,000 to 250,000.</p>
+<p><img src="output/figs_for_report/convergence_plot.png" /></p>
+<p><em>Figure 1: Fair spread estimates (bps) versus number of
+simulations. All methods converge to similar values, with quasi-random
+methods showing less variation at lower <span
+class="math inline">\(N\)</span>.</em></p>
+<p><img src="output/figs_for_report/se_convergence_plot.png" /></p>
+<p><em>Figure 2: Standard error convergence (log-log scale). The dashed
+line shows the theoretical <span
+class="math inline">\(O(1/\sqrt{N})\)</span> rate. Quasi-random methods
+achieve lower standard errors at equivalent sample sizes.</em></p>
+<p><strong>Findings</strong></p>
+<p>All four methods converge to the same fair spread estimate and
+exhibit similar standard errors at high sample counts. At lower
+simulation counts, quasi-random sequences (Halton, Sobol) show modestly
+lower standard error than pseudo-random—approximately 15-20% reduction
+at <span class="math inline">\(N=1,000\)</span>—but this advantage
+diminishes as <span class="math inline">\(N\)</span> increases. By <span
+class="math inline">\(N=100,000\)</span>, the methods are essentially
+indistinguishable in precision. The observed convergence rate matches
+standard Monte Carlo <span class="math inline">\(O(1/\sqrt{N})\)</span>
+for all methods, likely due to the non-smooth nature of the k-th to
+default payoff involving order statistics and indicator functions.</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: right;">N</th>
+<th style="text-align: right;">Pseudo-random SE</th>
+<th style="text-align: right;">Antithetic SE</th>
+<th style="text-align: right;">Halton SE</th>
+<th style="text-align: right;">Sobol SE</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: right;">1,000</td>
+<td style="text-align: right;">8.25</td>
+<td style="text-align: right;">7.02</td>
+<td style="text-align: right;">7.43</td>
+<td style="text-align: right;">6.84</td>
+</tr>
+<tr>
+<td style="text-align: right;">10,000</td>
+<td style="text-align: right;">2.29</td>
+<td style="text-align: right;">2.29</td>
+<td style="text-align: right;">2.29</td>
+<td style="text-align: right;">2.22</td>
+</tr>
+<tr>
+<td style="text-align: right;">100,000</td>
+<td style="text-align: right;">0.71</td>
+<td style="text-align: right;">0.70</td>
+<td style="text-align: right;">0.71</td>
+<td style="text-align: right;">0.71</td>
+</tr>
+<tr>
+<td style="text-align: right;">250,000</td>
+<td style="text-align: right;">0.45</td>
+<td style="text-align: right;">0.44</td>
+<td style="text-align: right;">0.45</td>
+<td style="text-align: right;">0.45</td>
+</tr>
+</tbody>
+</table>
+<p><em>Table 1: Standard error (bps) by RNG method and simulation
+count.</em></p>
+<p>Antithetic variates provide no benefit for this problem. As discussed
+in Section 2.5, the k-th to default payoff depends on an order
+statistic, and the sorting operation destroys the monotonic relationship
+required for variance reduction. Empirically, the correlation between
+paired payoffs was approximately zero (<span class="math inline">\(\rho
+\approx -0.01\)</span>).</p>
+<p><strong>Selected Configuration</strong></p>
+<p>Based on these findings, we select <strong>Sobol sequences with
+100,000 simulations</strong> for the main analysis, providing standard
+error below 0.5 bps. Antithetic variates are not used.</p>
+<h3 id="exploratory-data-analysis">4.2 Exploratory Data Analysis</h3>
+<p>The pricing analysis uses equity price data for five reference
+entities spanning January 2024 to January 2026. Daily adjusted closing
+prices are converted to log-returns, which serve as a proxy for credit
+spread changes when estimating the copula correlation matrix.</p>
+<p><img src="output/figs_for_report/equity_prices.png" /></p>
+<p><em>Figure 3: Equity price time series for the five reference
+entities (January 2024 – January 2026).</em></p>
+<p><img src="output/figs_for_report/correlation_heatmap.png" /></p>
+<p><em>Figure 4: Correlation heatmap of equity log-returns. Values
+represent Spearman rank correlations, which are converted to Pearson
+correlations for copula calibration.</em></p>
+<p>The synthetic CDS term structures provide spreads at tenors of 1, 2,
+3, 4, and 5 years for each entity. These curves exhibit the typical
+upward-sloping shape, with shorter tenors reflecting near-term default
+risk and longer tenors incorporating cumulative default probability.</p>
+<p><img src="output/figs_for_report/cds_term_structure.png" /></p>
+<p><em>Figure 5: CDS term structure curves by entity. Higher spreads
+indicate greater perceived credit risk.</em></p>
+<h3 id="calibration-results">4.3 Calibration Results</h3>
+<p>Calibration proceeds in two stages: bootstrapping hazard rates from
+CDS term structures (marginals), and estimating the copula correlation
+matrix from equity log-returns (dependence). The methodology for each
+stage is detailed in Sections 2.2 and 2.3 respectively.</p>
+<p><strong>Hazard Rate Bootstrapping</strong></p>
+<p>Hazard rates are bootstrapped sequentially from the CDS term
+structure for each entity using the methodology described in Section
+2.2. Starting from the 1-year tenor, each piecewise-constant hazard rate
+is solved to match the observed spread. The resulting step-wise hazard
+rate curves reflect each entity’s credit risk profile.</p>
+<p><img src="output/figs_for_report/hazard_rates.png" /></p>
+<p><em>Figure 6: Bootstrapped hazard rate term structures by entity.
+Higher hazard rates correspond to wider CDS spreads and greater default
+probability.</em></p>
+<p>Boeing exhibits the highest hazard rates, consistent with its wider
+CDS spreads (120 bps at 5Y), while Chevron and Exxon show the lowest
+default intensities, reflecting their investment-grade credit
+profiles.</p>
+<p><strong>Copula Correlation Matrix</strong></p>
+<p>The correlation matrix is estimated from equity log-returns using the
+rank correlation approach described in Section 2.3. Spearman’s <span
+class="math inline">\(\rho_S\)</span> is computed from the historical
+data and converted to Pearson correlation via <span
+class="math inline">\(\rho = 2\sin(\pi \rho_S / 6)\)</span>. This
+approach avoids the circular dependency problem in t-copula calibration
+and produces a correlation matrix valid for both Gaussian and
+t-copulas.</p>
+<p>The same correlation matrix is used for both copula models—the key
+difference lies in how the copulas transform these correlations into
+joint tail behaviour.</p>
+<p><strong>t-Copula Degrees of Freedom</strong></p>
+<p>For the t-copula, the degrees of freedom parameter <span
+class="math inline">\(\nu\)</span> is estimated via profile maximum
+likelihood as described in Section 2.3. With the correlation matrix
+fixed from rank correlation, we evaluate the log-likelihood across a
+range of <span class="math inline">\(\nu\)</span> values and select the
+maximiser.</p>
+<p><img src="output/figs_for_report/t_copula_llh_profile.png" /></p>
+<p><em>Figure 7: Profile log-likelihood for t-copula degrees of freedom.
+The vertical dashed line indicates the MLE estimate.</em></p>
+<p>The MLE yields <span class="math inline">\(\hat{\nu} \approx
+4\)</span>, indicating substantial tail dependence. Lower degrees of
+freedom imply heavier tails and more frequent joint extreme movements.
+As <span class="math inline">\(\nu \to \infty\)</span>, the t-copula
+converges to the Gaussian copula, so the estimated value of 4 represents
+a significant departure from Gaussian dependence—the data exhibits
+notably heavier tails than a normal distribution would predict. For
+sensitivity analysis in Section 4.5, we also examine pricing results
+across a range of <span class="math inline">\(\nu\)</span> values.</p>
+<h3 id="pricing-results">4.4 Pricing Results</h3>
+<p>Using the calibrated models and Sobol sequences with 100,000
+simulations, we compute fair spreads for the 5th-to-default basket CDS
+under both copulas. The pricing methodology follows Section 2.6, with
+the fair spread calculated as the ratio of protection leg to premium leg
+expected values.</p>
+<table>
+<thead>
+<tr>
+<th>Copula</th>
+<th style="text-align: right;">Fair Spread (bps)</th>
+<th style="text-align: right;">SE (bps)</th>
+<th style="text-align: right;">95% CI</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Gaussian</td>
+<td style="text-align: right;">7.36</td>
+<td style="text-align: right;">0.30</td>
+<td style="text-align: right;">[6.78, 7.94]</td>
+</tr>
+<tr>
+<td>Student-t</td>
+<td style="text-align: right;">53.84</td>
+<td style="text-align: right;">0.81</td>
+<td style="text-align: right;">[52.25, 55.43]</td>
+</tr>
+</tbody>
+</table>
+<p><em>Table 2: Fair spread estimates for 5th-to-default basket CDS
+(5-year maturity, 40% recovery).</em></p>
+<p><img src="output/figs_for_report/spread_comparison.png" /></p>
+<p><em>Figure 8: Fair spread comparison between copula models. Error
+bars represent 95% confidence intervals.</em></p>
+<p>The t-copula produces a fair spread approximately 7.3 times higher
+than the Gaussian copula (53.84 bps vs 7.36 bps). This substantial
+difference reflects tail dependence: the t-copula assigns higher
+probability to scenarios where all five entities default jointly within
+the contract period.</p>
+<p><strong>Default Probability Comparison</strong></p>
+<p>The difference in pricing stems directly from the probability of
+triggering the 5th default within the 5-year term:</p>
+<table>
+<thead>
+<tr>
+<th>Copula</th>
+<th style="text-align: right;">Defaults in Term</th>
+<th style="text-align: right;">Default Rate</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Gaussian</td>
+<td style="text-align: right;">612</td>
+<td style="text-align: right;">0.61%</td>
+</tr>
+<tr>
+<td>Student-t</td>
+<td style="text-align: right;">4,388</td>
+<td style="text-align: right;">4.39%</td>
+</tr>
+</tbody>
+</table>
+<p><em>Table 3: Number of simulations where all five entities default
+within the 5-year contract term.</em></p>
+<p><img src="output/figs_for_report/default_time_comparison.png" /></p>
+<p><em>Figure 9: Distribution of 5th-to-default times. The t-copula
+generates significantly more joint defaults, particularly in the early
+years.</em></p>
+<p><img
+src="output/figs_for_report/default_time_ecdf_comparison.png" /></p>
+<p><em>Figure 10: Empirical CDF of 5th-to-default times. The t-copula
+curve rises more steeply, indicating higher probability of early joint
+defaults.</em></p>
+<p>Under the Gaussian copula, joint defaults of all five entities are
+extremely rare—only 0.61% of simulations trigger payout. The t-copula’s
+heavier tails increase this probability by a factor of seven to 4.39%,
+dramatically increasing the expected protection leg value and therefore
+the fair spread required to compensate the protection seller. This
+demonstrates why copula selection is critical for pricing senior
+tranches of basket credit derivatives.</p>
+<p><strong>Preferred Estimate</strong></p>
+<p>The Gaussian copula’s fair spread of 7.36 bps appears unrealistically
+low for 5-year protection against simultaneous default of five major
+financial institutions. This underpricing stems from the Gaussian
+copula’s zero tail dependence property—it assigns negligible probability
+to joint extreme events. Historical evidence, particularly from the 2008
+financial crisis, demonstrates that credit defaults cluster during
+systemic stress, a phenomenon the Gaussian copula fails to capture.</p>
+<p>The t-copula’s fair spread of 53.84 bps better reflects this tail
+risk. Three factors support accepting the t-copula estimate: (1) the
+MLE-estimated degrees of freedom (<span class="math inline">\(\hat{\nu}
+\approx 4\)</span>) indicates the data exhibits heavier tails than
+Gaussian, (2) financial sector names share significant exposure to
+common macroeconomic factors that drive simultaneous deterioration, and
+(3) prudent risk management favours the more conservative estimate when
+pricing protection against catastrophic scenarios. We therefore adopt
+<strong>53.84 bps</strong> as the fair spread for the 5th-to-default
+basket CDS.</p>
+<h3 id="sensitivity-analysis">4.5 Sensitivity Analysis</h3>
+<p>This section examines how the fair spread responds to changes in key
+model parameters. All sensitivity analyses use the t-copula model with
+100,000 Sobol simulations unless otherwise noted. The base case
+parameters are: K=5 (5th-to-default), high correlation (financial
+sector), ν=3.9 (MLE estimate), and R=40% recovery rate.</p>
+<h4 id="impact-of-tranche-seniority-k">4.5.1 Impact of Tranche Seniority
+(k)</h4>
+<p>The tranche seniority k determines how many defaults are required to
+trigger payout. Lower k values represent junior tranches that absorb the
+first losses, while higher k values represent senior tranches protected
+by subordination.</p>
+<table>
+<thead>
+<tr>
+<th>k</th>
+<th style="text-align: right;">Fair Spread (bps)</th>
+<th style="text-align: right;">SE (bps)</th>
+<th style="text-align: right;">Defaults in Term</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1st</td>
+<td style="text-align: right;">283.64</td>
+<td style="text-align: right;">1.98</td>
+<td style="text-align: right;">20,876 (20.9%)</td>
+</tr>
+<tr>
+<td>2nd</td>
+<td style="text-align: right;">180.63</td>
+<td style="text-align: right;">1.54</td>
+<td style="text-align: right;">13,888 (13.9%)</td>
+</tr>
+<tr>
+<td>3rd</td>
+<td style="text-align: right;">127.78</td>
+<td style="text-align: right;">1.28</td>
+<td style="text-align: right;">10,055 (10.1%)</td>
+</tr>
+<tr>
+<td>4th</td>
+<td style="text-align: right;">89.48</td>
+<td style="text-align: right;">1.06</td>
+<td style="text-align: right;">7,169 (7.2%)</td>
+</tr>
+<tr>
+<td>5th</td>
+<td style="text-align: right;">53.84</td>
+<td style="text-align: right;">0.81</td>
+<td style="text-align: right;">4,388 (4.4%)</td>
+</tr>
+</tbody>
+</table>
+<p><em>Table 4: Fair spreads by tranche seniority. Base case (K=5)
+highlighted.</em></p>
+<p><img src="output/figs_for_report/sensitivity_k.png" /></p>
+<p><em>Figure 11: Fair spread decreases with tranche seniority as more
+defaults are required to trigger payout.</em></p>
+<p>The 1st-to-default spread (283.64 bps) is approximately 5.3 times
+higher than the 5th-to-default spread (53.84 bps). This reflects the
+subordination benefit: while a single default among five correlated
+financials is relatively likely (20.9% of simulations), requiring all
+five to default within five years is much rarer (4.4%). The non-linear
+relationship between k and spread demonstrates the value of
+subordination in structured credit products.</p>
+<h4 id="impact-of-correlation">4.5.2 Impact of Correlation</h4>
+<p>Correlation fundamentally determines the joint default behaviour. We
+compare two correlation regimes while holding marginal default
+probabilities constant:</p>
+<ul>
+<li><strong>High correlation</strong>: Financial sector basket
+(calibrated from equity returns)</li>
+<li><strong>Low correlation</strong>: Diversified basket (scaled to
+average pairwise correlation ~0.15)</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Correlation Level</th>
+<th style="text-align: right;">Fair Spread (bps)</th>
+<th style="text-align: right;">SE (bps)</th>
+<th style="text-align: right;">Defaults in Term</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>High (Financial)</td>
+<td style="text-align: right;">53.84</td>
+<td style="text-align: right;">0.81</td>
+<td style="text-align: right;">4,388 (4.4%)</td>
+</tr>
+<tr>
+<td>Low (Diversified)</td>
+<td style="text-align: right;">1.13</td>
+<td style="text-align: right;">0.12</td>
+<td style="text-align: right;">94 (0.09%)</td>
+</tr>
+</tbody>
+</table>
+<p><em>Table 5: Fair spreads by correlation level. Marginal hazard rates
+unchanged between scenarios.</em></p>
+<p><img
+src="output/figs_for_report/sensitivity_correlation_times.png" /></p>
+<p><em>Figure 12: Distribution of 5th-to-default times by correlation
+level. High correlation produces more joint defaults within the contract
+term.</em></p>
+<p><img
+src="output/figs_for_report/sensitivity_correlation_spread.png" /></p>
+<p><em>Figure 13: Fair spread comparison showing the dramatic impact of
+correlation on senior tranche pricing.</em></p>
+<p>The high-correlation basket produces a spread nearly 48 times larger
+than the diversified basket (53.84 vs 1.13 bps). This striking
+difference occurs because correlation affects how individual defaults
+cluster in time. With low correlation, even if each entity has material
+default risk individually, the probability of all five defaulting within
+the same 5-year window is negligible (0.09%). High correlation causes
+defaults to cluster during stress periods, dramatically increasing joint
+default probability (4.4%). This demonstrates why correlation is the
+dominant risk factor for senior tranches.</p>
+<h4 id="impact-of-degrees-of-freedom">4.5.3 Impact of Degrees of
+Freedom</h4>
+<p>The t-copula degrees of freedom parameter ν controls tail dependence.
+Lower ν produces heavier tails and stronger dependence during extreme
+events. As ν → ∞, the t-copula converges to the Gaussian copula.</p>
+<table>
+<thead>
+<tr>
+<th>ν</th>
+<th style="text-align: right;">Fair Spread (bps)</th>
+<th style="text-align: right;">SE (bps)</th>
+<th style="text-align: right;">Defaults in Term</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>3</td>
+<td style="text-align: right;">60.29</td>
+<td style="text-align: right;">0.86</td>
+<td style="text-align: right;">4,899 (4.9%)</td>
+</tr>
+<tr>
+<td>3.9 (base)</td>
+<td style="text-align: right;">54.33</td>
+<td style="text-align: right;">0.82</td>
+<td style="text-align: right;">4,427 (4.4%)</td>
+</tr>
+<tr>
+<td>6</td>
+<td style="text-align: right;">43.44</td>
+<td style="text-align: right;">0.73</td>
+<td style="text-align: right;">3,556 (3.6%)</td>
+</tr>
+<tr>
+<td>10</td>
+<td style="text-align: right;">34.03</td>
+<td style="text-align: right;">0.64</td>
+<td style="text-align: right;">2,798 (2.8%)</td>
+</tr>
+<tr>
+<td>15</td>
+<td style="text-align: right;">28.45</td>
+<td style="text-align: right;">0.59</td>
+<td style="text-align: right;">2,346 (2.3%)</td>
+</tr>
+<tr>
+<td>30</td>
+<td style="text-align: right;">21.17</td>
+<td style="text-align: right;">0.51</td>
+<td style="text-align: right;">1,751 (1.8%)</td>
+</tr>
+<tr>
+<td>Gaussian (∞)</td>
+<td style="text-align: right;">7.36</td>
+<td style="text-align: right;">0.30</td>
+<td style="text-align: right;">612 (0.6%)</td>
+</tr>
+</tbody>
+</table>
+<p><em>Table 6: Fair spreads by degrees of freedom. Base case (ν=3.9)
+highlighted.</em></p>
+<p><img src="output/figs_for_report/sensitivity_df.png" /></p>
+<p><em>Figure 14: Fair spread vs degrees of freedom. The horizontal
+dashed line shows the Gaussian copula limit. Lower ν produces higher
+spreads due to increased tail dependence.</em></p>
+<p>The spread at ν=3 (60.29 bps) is approximately 8 times higher than
+the Gaussian limit (7.36 bps). Our MLE estimate of ν=3.9 produces a
+spread of 54.33 bps. The monotonic decline in spread as ν increases
+reflects diminishing tail dependence: with high ν, extreme co-movements
+become less likely, reducing joint default probability. The gap between
+low-ν t-copula pricing and Gaussian pricing illustrates the model risk
+inherent in copula selection.</p>
+<h4 id="impact-of-recovery-rate">4.5.4 Impact of Recovery Rate</h4>
+<p>The recovery rate R determines the loss given default (LGD = 1 - R)
+and therefore the payout magnitude when defaults occur.</p>
+<table>
+<thead>
+<tr>
+<th>Recovery Rate</th>
+<th style="text-align: right;">Fair Spread (bps)</th>
+<th style="text-align: right;">SE (bps)</th>
+<th style="text-align: right;">Defaults in Term</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0%</td>
+<td style="text-align: right;">65.16</td>
+<td style="text-align: right;">1.15</td>
+<td style="text-align: right;">3,208 (3.2%)</td>
+</tr>
+<tr>
+<td>30%</td>
+<td style="text-align: right;">56.59</td>
+<td style="text-align: right;">0.90</td>
+<td style="text-align: right;">3,962 (4.0%)</td>
+</tr>
+<tr>
+<td>40% (base)</td>
+<td style="text-align: right;">53.84</td>
+<td style="text-align: right;">0.81</td>
+<td style="text-align: right;">4,388 (4.4%)</td>
+</tr>
+<tr>
+<td>50%</td>
+<td style="text-align: right;">49.35</td>
+<td style="text-align: right;">0.71</td>
+<td style="text-align: right;">4,812 (4.8%)</td>
+</tr>
+</tbody>
+</table>
+<p><em>Table 7: Fair spreads by recovery rate assumption.</em></p>
+<p><img src="output/figs_for_report/sensitivity_recovery.png" /></p>
+<p><em>Figure 15: Fair spread vs recovery rate. Higher recovery reduces
+the protection leg value, lowering the required spread.</em></p>
+<p>The relationship between spread and recovery rate shows an
+interesting pattern. Higher recovery reduces the loss given default,
+which directly reduces the protection leg value. However, the effect is
+partially offset by the premium leg calculation: higher recovery also
+appears in the denominator through the effective notional. The spread at
+0% recovery (65.16 bps) is approximately 32% higher than at 50% recovery
+(49.35 bps).</p>
+<p>Note that the number of defaults in term varies slightly across
+recovery scenarios due to Monte Carlo sampling variation, but this does
+not materially affect the conclusions.</p>
+<h4 id="summary-of-sensitivities">4.5.5 Summary of Sensitivities</h4>
+<table>
+<colgroup>
+<col style="width: 18%" />
+<col style="width: 24%" />
+<col style="width: 34%" />
+<col style="width: 22%" />
+</colgroup>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Range Tested</th>
+<th style="text-align: right;">Spread Range (bps)</th>
+<th>Key Insight</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>k</td>
+<td>1st to 5th</td>
+<td style="text-align: right;">283.64 → 53.84</td>
+<td>Subordination provides ~5x protection</td>
+</tr>
+<tr>
+<td>Correlation</td>
+<td>Low to High</td>
+<td style="text-align: right;">1.13 → 53.84</td>
+<td>Correlation is dominant factor (~48x)</td>
+</tr>
+<tr>
+<td>ν</td>
+<td>3 to Gaussian</td>
+<td style="text-align: right;">60.29 → 7.36</td>
+<td>Tail dependence critical (~8x)</td>
+</tr>
+<tr>
+<td>Recovery</td>
+<td>0% to 50%</td>
+<td style="text-align: right;">65.16 → 49.35</td>
+<td>Moderate impact (~32%)</td>
+</tr>
+</tbody>
+</table>
+<p><em>Table 8: Summary of sensitivity analysis results.</em></p>
+<p>The analysis reveals that correlation and copula selection (through
+degrees of freedom) have the most significant impact on 5th-to-default
+pricing. Recovery rate assumptions, while important, have a
+comparatively modest effect. These findings underscore the importance of
+careful calibration and the model risk inherent in basket credit
+derivative pricing.</p>
+<hr />
+<h2 id="conclusion">5. Conclusion</h2>
+<h3 id="executive-summary">5.1 Executive Summary</h3>
+<p>This project developed a Monte Carlo simulation framework for pricing
+k-th to default basket credit default swaps using copula models. The
+implementation prices a 5-year, 5th-to-default CDS on a basket of five
+major US financial institutions: JPMorgan Chase, Bank of America,
+Citigroup, Wells Fargo, and Goldman Sachs.</p>
+<p><strong>Key Findings</strong></p>
+<p>The fair spread for the 5th-to-default basket CDS varies dramatically
+depending on copula specification:</p>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th style="text-align: right;">Fair Spread</th>
+<th style="text-align: right;">95% CI</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Gaussian Copula</td>
+<td style="text-align: right;">7.36 bps</td>
+<td style="text-align: right;">[6.78, 7.94]</td>
+</tr>
+<tr>
+<td>t-Copula (ν=3.9)</td>
+<td style="text-align: right;">53.84 bps</td>
+<td style="text-align: right;">[52.25, 55.43]</td>
+</tr>
+</tbody>
+</table>
+<p>The t-copula produces a spread approximately 7.3 times higher than
+the Gaussian copula. This difference stems entirely from tail
+dependence: the t-copula assigns meaningful probability to joint extreme
+events where all five institutions default simultaneously, while the
+Gaussian copula treats such scenarios as negligibly rare.</p>
+<p>We recommend the <strong>t-copula estimate of 53.84 bps</strong> as
+the fair spread. The MLE-estimated degrees of freedom (ν≈4) indicates
+the historical data exhibits substantially heavier tails than a Gaussian
+distribution would predict, and prudent risk management favours the more
+conservative estimate when pricing protection against systemic credit
+events.</p>
+<p><strong>Sensitivity Analysis Insights</strong></p>
+<p>The sensitivity analysis revealed the relative importance of model
+parameters:</p>
+<ol type="1">
+<li><p><strong>Correlation</strong> is the dominant factor, with a
+48-fold spread difference between high and low correlation regimes. This
+confirms that for senior tranches, default dependence structure matters
+far more than individual default probabilities.</p></li>
+<li><p><strong>Copula selection</strong> (via degrees of freedom)
+produces an 8-fold spread difference between heavy-tailed (ν=3) and
+Gaussian specifications. Model risk in copula choice is substantial and
+cannot be ignored.</p></li>
+<li><p><strong>Tranche seniority</strong> shows the expected
+subordination benefit, with 1st-to-default spreads approximately 5 times
+higher than 5th-to-default.</p></li>
+<li><p><strong>Recovery rate</strong> has a moderate 32% impact across
+the tested range, less influential than dependence structure
+assumptions.</p></li>
+</ol>
+<p><strong>Methodology Recommendations</strong></p>
+<p>Based on our analysis, we recommend the following methodology for
+basket CDS pricing:</p>
+<ol type="1">
+<li><strong>Use t-copula over Gaussian</strong> for financial sector
+baskets where tail dependence is economically meaningful</li>
+<li><strong>Employ Sobol sequences</strong> for variance reduction—they
+provide faster convergence than pseudo-random sampling at no additional
+computational cost</li>
+<li><strong>Calibrate correlation from rank correlation</strong>
+(Spearman converted to Pearson) to avoid circular dependency issues in
+t-copula parameter estimation</li>
+<li><strong>Estimate degrees of freedom via profile MLE</strong> with
+correlation fixed, treating ν as a measure of tail heaviness in the
+data</li>
+<li><strong>Conduct sensitivity analysis</strong> across correlation, ν,
+and recovery assumptions to quantify model risk</li>
+</ol>
+<h3 id="assumptions-and-limitations">5.2 Assumptions and
+Limitations</h3>
+<p>The pricing framework relies on several simplifying assumptions that
+users should understand:</p>
+<p><strong>Market Data and Calibration</strong></p>
+<ul>
+<li><p><strong>Equity correlation as proxy for default
+correlation</strong>: We calibrate the copula correlation matrix from
+equity log-returns rather than direct measures of default dependence.
+While equity prices embed credit risk information, this proxy may not
+fully capture joint default behaviour during stress periods when
+equity-credit relationships can break down.</p></li>
+<li><p><strong>Historical calibration period</strong>: The correlation
+structure is estimated from a specific historical window and may not
+reflect future dependence patterns, particularly during regime changes
+or unprecedented stress events.</p></li>
+</ul>
+<p><strong>Model Simplifications</strong></p>
+<ul>
+<li><p><strong>Zero interest rates</strong>: The implementation assumes
+zero risk-free rates for discounting. In practice, the discount curve
+affects the relative weighting of near-term versus distant cash flows,
+though the impact on spread ratios between copula models would be
+modest.</p></li>
+<li><p><strong>Constant recovery rate</strong>: We assume a fixed 40%
+recovery rate for all entities and all scenarios. In reality, recovery
+rates are stochastic, negatively correlated with default rates
+(recoveries tend to be lower during systemic crises when defaults
+cluster), and entity-specific.</p></li>
+<li><p><strong>Piecewise-constant hazard rates</strong>: Hazard rates
+are assumed constant between CDS tenor points and bootstrapped from
+market spreads. This is standard practice but ignores potential
+intra-period variation.</p></li>
+<li><p><strong>Static correlation</strong>: The correlation matrix is
+fixed throughout the contract term. Dynamic copula models that allow
+correlation to evolve over time or vary with market conditions would be
+more realistic but substantially more complex.</p></li>
+<li><p><strong>No wrong-way risk</strong>: We do not model correlation
+between counterparty credit quality and the protection seller’s ability
+to pay. For dealer-intermediated trades, this could be
+material.</p></li>
+</ul>
+<p><strong>Scope Limitations</strong></p>
+<ul>
+<li><p><strong>Risk-neutral pricing only</strong>: The framework
+produces fair value spreads under risk-neutral measure. Commercial
+pricing would require additional adjustments for CVA/DVA, funding costs,
+regulatory capital, and profit margins.</p></li>
+<li><p><strong>Single basket composition</strong>: Results are specific
+to the five financial institutions analysed. Different sector
+compositions or geographic diversification would produce different
+correlation structures and spread levels.</p></li>
+</ul>
+<h3 id="challenges-encountered">5.3 Challenges Encountered</h3>
+<p><strong>Data Sourcing</strong></p>
+<p>Obtaining consistent, high-quality CDS spread data proved
+challenging. CDS markets are over-the-counter with limited price
+transparency, and historical spread series often contain gaps, stale
+quotes, or inconsistent tenors across entities. We ultimately used a
+combination of market data sources and applied cleaning procedures to
+construct usable term structures.</p>
+<p><strong>t-Copula Parameter Estimation</strong></p>
+<p>The t-copula presents a circular dependency problem: estimating
+correlation requires knowing degrees of freedom, but estimating degrees
+of freedom requires knowing correlation. We resolved this by:</p>
+<ol type="1">
+<li>Using rank correlation (Spearman’s ρ) converted to Pearson
+correlation via the elliptical copula relationship ρ = 2sin(πρ_S/6)</li>
+<li>Fixing this correlation matrix and estimating ν via profile maximum
+likelihood</li>
+</ol>
+<p>This approach is theoretically justified for elliptical copulas and
+avoids unstable joint optimisation.</p>
+<p><strong>Variance Reduction for t-Copula</strong></p>
+<p>We expected antithetic variates to provide improved convergence for
+the t-copula simulation. The standard approach of negating uniform draws
+works for the Gaussian copula, but is insufficient for the t-copula,
+which involves both correlated normals and an independent chi-square
+component. We implemented antithetic sampling of the normal component
+alone (without the chi-square), but found no measurable variance
+reduction for the k-th to default payoff. As discussed in Section 4.1,
+the order statistic payoff structure destroys the monotonic relationship
+required for antithetic variates to be effective.</p>
+<p><strong>Computational Performance</strong></p>
+<p>With 100,000 simulations and multiple sensitivity scenarios, total
+computation time became non-trivial. Quasi-random sequences (Sobol)
+helped by achieving target precision with fewer simulations than
+pseudo-random sampling would require. For production use, further
+optimisation through vectorisation, parallel processing, or GPU
+acceleration would be beneficial.</p>
+<h3 id="further-work">5.4 Further Work</h3>
+<p>Several extensions would enhance the framework’s analytical rigour
+and practical applicability.</p>
+<p><strong>Model Enhancements</strong></p>
+<p>These extensions would improve the theoretical foundations of the
+pricing model:</p>
+<ul>
+<li><p><strong>Interest rate discounting</strong>: Incorporate a
+risk-free discount curve bootstrapped from OIS rates to properly weight
+cash flows across the term structure.</p></li>
+<li><p><strong>Stochastic recovery</strong>: Model recovery rates as
+random variables, potentially correlated with systematic factors, to
+capture the empirical observation that recoveries decline during credit
+crises.</p></li>
+<li><p><strong>Kernel density estimation for marginals</strong>: Replace
+the rank-based empirical CDF transformation with kernel density
+estimation (KDE) when converting observations to uniform marginals. KDE
+provides a smoother estimate of the marginal distributions, which may
+improve copula calibration particularly in the tails where the empirical
+CDF can be noisy.</p></li>
+<li><p><strong>Alternative copula families</strong>: Implement
+asymmetric copulas (Clayton, Gumbel) that can capture different upper
+versus lower tail dependence. Financial defaults may exhibit asymmetric
+dependence—stronger co-movement in distress than in benign
+conditions.</p></li>
+<li><p><strong>Dynamic copulas</strong>: Allow the correlation structure
+to evolve over time, either through regime-switching models or
+continuous-time stochastic correlation specifications.</p></li>
+</ul>
+<p><strong>Further Analysis</strong></p>
+<p>These investigations would deepen understanding of model behaviour
+and validate the methodology:</p>
+<ul>
+<li><p><strong>Antithetic variates investigation</strong>: Investigate
+more thoroughly why antithetic variates provided no variance reduction
+for the k-th to default payoff, despite implementation for the normal
+component. Extend the approach to include antithetic sampling of the
+chi-square component in t-copula simulation, and evaluate whether
+alternative variance reduction techniques (e.g., control variates,
+importance sampling) would be more effective for order statistic
+payoffs.</p></li>
+<li><p><strong>Empirical validation</strong>: Compare model-implied
+spreads to traded basket CDS or CDO tranche prices to assess model
+performance and calibrate any systematic biases.</p></li>
+<li><p><strong>Stress testing</strong>: Develop scenario frameworks that
+shock correlation, hazard rates, and recovery simultaneously to assess
+tail risk under extreme but plausible conditions.</p></li>
+<li><p><strong>Machine learning integration</strong>: Explore whether ML
+techniques can improve copula calibration, particularly for capturing
+non-linear dependence structures or regime changes that parametric
+copulas may miss.</p></li>
+</ul>
+<p><strong>Productionisation</strong></p>
+<p>These extensions would be required to deploy the framework in a
+production trading or risk management environment:</p>
+<ul>
+<li><p><strong>XVA adjustments</strong>: Bridge the gap between
+risk-neutral fair value and executable prices by incorporating credit
+valuation adjustment (CVA), debit valuation adjustment (DVA), and
+funding valuation adjustment (FVA).</p></li>
+<li><p><strong>Regulatory capital</strong>: Compute capital requirements
+under Basel III/IV standardised or internal model approaches to
+understand the full cost of holding basket credit exposure.</p></li>
+<li><p><strong>Greeks and hedging</strong>: Implement sensitivities to
+spread movements (CS01), correlation (correlation vega), and recovery
+rate to support dynamic hedging strategies.</p></li>
+<li><p><strong>Real-time calibration</strong>: Develop infrastructure
+for daily recalibration to market data, enabling mark-to-market and
+ongoing risk monitoring.</p></li>
+</ul>
+<hr />
+<h2 id="references">6. References</h2>
+<h3 id="cqf-programme-materials">CQF Programme Materials</h3>
+<ul>
+<li>CQF Module 3: JU253.4 Intro to Numerical Methods</li>
+<li>CQF Module 6: JU256.7 Further Monte Carlo</li>
+<li>CQF Module 6: JU256.9 Credit Default Swaps</li>
+<li>CQF Module 6: JU256.10 Structural Models for Default Prediction and
+Dependency Modelling</li>
+<li>CQF Elective: Counterparty Credit Risk Modelling</li>
+</ul>
+<h3 id="academic-references">Academic References</h3>
+<p>Cherubini, U., Luciano, E. and Vecchiato, W. (2004) <em>Copula
+Methods in Finance</em>. Chichester: John Wiley &amp; Sons.</p>
+<p>Glasserman, P. (2003) <em>Monte Carlo Methods in Financial
+Engineering</em>. New York: Springer.</p>
+<p>Hull, J. and White, A. (2004) ‘Valuation of a CDO and an n-th to
+Default CDS Without Monte Carlo Simulation’, <em>Journal of
+Derivatives</em>, 12(2), pp. 8-23.</p>
+<p>Li, D.X. (2000) ‘On Default Correlation: A Copula Function Approach’,
+<em>Journal of Fixed Income</em>, 9(4), pp. 43-54.</p>
+<p>McNeil, A.J., Frey, R. and Embrechts, P. (2015) <em>Quantitative Risk
+Management: Concepts, Techniques and Tools</em>. Revised edn. Princeton:
+Princeton University Press.</p>
+<p>Nelsen, R.B. (2006) <em>An Introduction to Copulas</em>. 2nd edn. New
+York: Springer.</p>
+<p>Niederreiter, H. (1992) <em>Random Number Generation and Quasi-Monte
+Carlo Methods</em>. Philadelphia: SIAM.</p>
+<p>Schönbucher, P.J. (2003) <em>Credit Derivatives Pricing Models:
+Models, Pricing and Implementation</em>. Chichester: John Wiley &amp;
+Sons.</p>
+</body>
+</html>

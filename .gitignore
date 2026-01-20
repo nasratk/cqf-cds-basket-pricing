@@ -5,4 +5,8 @@ __pycache__/
 .ipynb_checkpoints/
 .virtual_documents/
 output/
-data/*.csvdocuments/
+data/*.csv
+documents/
+archive/
+*.docx
+scripts/
